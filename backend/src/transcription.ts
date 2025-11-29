@@ -18,8 +18,8 @@ export function setupTranscription(io: Server) {
                 const buffer = Buffer.from(payload.audio);
                 const base64Audio = buffer.toString('base64');
 
-                // Use Gemini's multimodal model for audio transcription
-                const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+                // Use Gemini 2.0 Flash for audio transcription
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
                 const result = await model.generateContent([
                     {
