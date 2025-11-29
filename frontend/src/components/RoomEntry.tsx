@@ -1,45 +1,13 @@
-import React, { useState } from 'react';
-import { Socket } from 'socket.io-client';
+const [error, setError] = useState('');
 
-interface RoomEntryProps {
-    socket: Socket | null;
-    onJoin: (roomId: string) => void;
-}
+const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
 
-export const RoomEntry: React.FC<RoomEntryProps> = ({ socket, onJoin }) => {
-    const [mode, setMode] = useState<'create' | 'join'>('create');
-    const [roomId, setRoomId] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        setError('');
-
-        if (!socket) {
-            setError('Not connected to server');
-            return;
-        }
-
-        if (!roomId.trim()) {
-            setError('Room ID is required');
-            return;
-        }
-
-        const event = mode === 'create' ? 'create-room' : 'join-room';
-
-        socket.emit(event, { roomId, password }, (response: { success: boolean; message?: string }) => {
-            if (response.success) {
-                onJoin(roomId);
-            } else {
-                setError(response.message || 'Unknown error');
-            }
-        });
-    };
-
-    return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
-            <div className="bg-gray-800 p-8 rounded-lg shadow-lg w-full max-w-md">
+    if (!socket) {
+        setError('Not connected to server');
+        return;
+    }
                 <h1 className="text-2xl font-bold mb-6 text-center">
                     {mode === 'create' ? 'Create a Room' : 'Join a Room'}
                 </h1>
@@ -91,7 +59,7 @@ export const RoomEntry: React.FC<RoomEntryProps> = ({ socket, onJoin }) => {
                         {mode === 'create' ? 'Create & Join' : 'Join Room'}
                     </button>
                 </form>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 };
