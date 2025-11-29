@@ -42,16 +42,20 @@ function App() {
     if (!socket) return;
 
     socket.on('transcript', (data: { userId: string; text: string; timestamp: number; isFinal: boolean }) => {
-      // If it's from me, update local transcript
+      // Only process final transcripts
+      if (!data.isFinal) return;
+
+      // Accumulate transcripts (don't replace)
       if (data.userId === socket.id) {
-        setLocalTranscript(data.text);
+        // My own transcript
+        setLocalTranscript(prev => prev ? `${prev}\n${data.text}` : data.text);
       } else {
-        // Otherwise, update remote transcript
-        setRemoteTranscript(data.text);
+        // Remote user's transcript
+        setRemoteTranscript(prev => prev ? `${prev}\n${data.text}` : data.text);
       }
 
-      // Request translation if enabled and it's a final transcript
-      if (isTranslationOn && data.isFinal) {
+      // Request translation if enabled
+      if (isTranslationOn) {
         socket.emit('translate-req', {
           roomId,
           text: data.text,
@@ -63,11 +67,11 @@ function App() {
     });
 
     socket.on('translation', (data: { userId: string; translatedText: string; timestamp: number }) => {
-      // Update the appropriate transcript with translation
+      // Append translation below the original text
       if (data.userId === socket.id) {
-        setLocalTranscript(prev => `${prev}\n[${targetLang}]: ${data.translatedText}`);
+        setLocalTranscript(prev => `${prev}\n  → [${targetLang}]: ${data.translatedText}`);
       } else {
-        setRemoteTranscript(prev => `${prev}\n[${targetLang}]: ${data.translatedText}`);
+        setRemoteTranscript(prev => `${prev}\n  → [${targetLang}]: ${data.translatedText}`);
       }
     });
 

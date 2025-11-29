@@ -1,41 +1,38 @@
 import { Server, Socket } from 'socket.io';
-import axios from 'axios';
-import FormData from 'form-data';
-import { Readable } from 'stream';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export function setupTranscription(io: Server) {
-    const GROQ_API_KEY = process.env.GROQ_API_KEY;
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+    if (!GEMINI_API_KEY) {
+        console.error('GEMINI_API_KEY is not set');
+        return;
+    }
+
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
     io.on('connection', (socket: Socket) => {
         socket.on('audio-chunk', async (payload: { roomId: string; audio: ArrayBuffer; timestamp: number }) => {
             try {
-                if (!GROQ_API_KEY) {
-                    console.error('GROQ_API_KEY is not set');
-                    return;
-                }
-
-                // Convert ArrayBuffer to Buffer
+                // Convert ArrayBuffer to base64
                 const buffer = Buffer.from(payload.audio);
+                const base64Audio = buffer.toString('base64');
 
-                // Create a readable stream from the buffer
-                const stream = Readable.from(buffer);
-                // Hack to give the stream a path/filename so form-data knows it's a file
-                (stream as any).path = 'audio.webm';
+                // Use Gemini's multimodal model for audio transcription
+                const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-                const formData = new FormData();
-                formData.append('file', stream, { filename: 'audio.webm', contentType: 'audio/webm' });
-                formData.append('model', 'whisper-large-v3');
-                formData.append('response_format', 'json');
-                formData.append('language', 'en');
+                const result = await model.generateContent([
+                    {
+                        inlineData: {
+                            mimeType: 'audio/webm',
+                            data: base64Audio
+                        }
+                    },
+                    'Transcribe this audio to text. Only return the transcribed text, nothing else.'
+                ]);
 
-                const response = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
-                    headers: {
-                        ...formData.getHeaders(),
-                        'Authorization': `Bearer ${GROQ_API_KEY}`
-                    }
-                });
+                const text = result.response.text();
 
-                const text = response.data.text;
                 if (text && text.trim().length > 0) {
                     // Broadcast to entire room (including sender)
                     io.to(payload.roomId).emit('transcript', {
@@ -47,7 +44,7 @@ export function setupTranscription(io: Server) {
                 }
 
             } catch (error: any) {
-                console.error('Transcription error:', error.response?.data || error.message);
+                console.error('Transcription error:', error.message);
             }
         });
     });

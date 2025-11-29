@@ -1,152 +1,177 @@
 import { useEffect, useRef } from 'react';
 import { Socket } from 'socket.io-client';
 
-// TypeScript interfaces for Web Speech API
-interface SpeechRecognitionEvent extends Event {
-    results: SpeechRecognitionResultList;
-    resultIndex: number;
-}
-
-interface SpeechRecognitionErrorEvent extends Event {
-    error: string;
-}
-
-interface SpeechRecognitionResultList {
-    length: number;
-    item(index: number): SpeechRecognitionResult;
-    [index: number]: SpeechRecognitionResult;
-}
-
-interface SpeechRecognitionResult {
-    isFinal: boolean;
-    length: number;
-    item(index: number): SpeechRecognitionAlternative;
-    [index: number]: SpeechRecognitionAlternative;
-}
-
-interface SpeechRecognitionAlternative {
-    transcript: string;
-    confidence: number;
-}
-
-interface SpeechRecognition extends EventTarget {
-    continuous: boolean;
-    interimResults: boolean;
-    lang: string;
-    onresult: ((event: SpeechRecognitionEvent) => void) | null;
-    onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-    onend: (() => void) | null;
-    start(): void;
-    stop(): void;
-}
-
-declare global {
-    interface Window {
-        SpeechRecognition: new () => SpeechRecognition;
-        webkitSpeechRecognition: new () => SpeechRecognition;
-    }
-}
-
 export const useAudioStream = (socket: Socket | null, roomId: string, isMicOn: boolean) => {
-    const recognitionRef = useRef<SpeechRecognition | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const streamRef = useRef<MediaStream | null>(null);
+    const isSpeakingRef = useRef(false);
+    const silenceTimeoutRef = useRef<number | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
 
     useEffect(() => {
-        // Check if browser supports Web Speech API
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-        if (!SpeechRecognition) {
-            console.warn('Web Speech API not supported in this browser. Please use Chrome or Edge.');
-            return;
-        }
-
         if (!socket || !isMicOn || !roomId) {
-            stopRecognition();
+            stopRecording();
             return;
         }
 
-        startRecognition();
+        startVAD();
 
         return () => {
-            stopRecognition();
+            stopRecording();
         };
     }, [socket, isMicOn, roomId]);
 
-    const startRecognition = () => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-        if (!SpeechRecognition) return;
-
-        const recognition = new SpeechRecognition();
-        recognitionRef.current = recognition;
-
-        // Configuration
-        recognition.continuous = true; // Keep listening
-        recognition.interimResults = true; // Get partial results as you speak
-        recognition.lang = 'en-US';
-
-        recognition.onresult = (event: SpeechRecognitionEvent) => {
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
-                const isFinal = event.results[i].isFinal;
-
-                // Send transcript to backend
-                if (transcript.trim().length > 0 && socket) {
-                    socket.emit('transcript', {
-                        roomId,
-                        userId: socket.id,
-                        text: transcript.trim(),
-                        timestamp: Date.now(),
-                        isFinal
-                    });
-                }
-            }
-        };
-
-        recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-            console.error('Speech recognition error:', event.error);
-
-            // Auto-restart on certain errors
-            if (event.error === 'no-speech' || event.error === 'audio-capture') {
-                setTimeout(() => {
-                    if (isMicOn && recognitionRef.current) {
-                        try {
-                            recognition.start();
-                        } catch (e) {
-                            // Ignore if already started
-                        }
-                    }
-                }, 1000);
-            }
-        };
-
-        recognition.onend = () => {
-            // Auto-restart if mic is still on
-            if (isMicOn && recognitionRef.current) {
-                try {
-                    recognition.start();
-                } catch (e) {
-                    console.error('Failed to restart recognition:', e);
-                }
-            }
-        };
-
+    const startVAD = async () => {
         try {
-            recognition.start();
-            console.log('Speech recognition started');
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream;
+
+            // Setup AudioContext for VAD
+            const audioContext = new AudioContext();
+            audioContextRef.current = audioContext;
+
+            const source = audioContext.createMediaStreamSource(stream);
+            const analyser = audioContext.createAnalyser();
+            analyserRef.current = analyser;
+
+            analyser.fftSize = 512; // Smaller for faster response
+            analyser.smoothingTimeConstant = 0.3;
+            source.connect(analyser);
+
+            // Start monitoring audio levels
+            monitorAudioLevel();
         } catch (error) {
-            console.error('Error starting speech recognition:', error);
+            console.error('Error accessing microphone:', error);
         }
     };
 
-    const stopRecognition = () => {
-        if (recognitionRef.current) {
-            try {
-                recognitionRef.current.stop();
-                console.log('Speech recognition stopped');
-            } catch (e) {
-                // Ignore errors when stopping
+    const monitorAudioLevel = () => {
+        if (!analyserRef.current) return;
+
+        const analyser = analyserRef.current;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const checkAudioLevel = () => {
+            analyser.getByteFrequencyData(dataArray);
+
+            // Calculate average volume
+            const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+
+            // Adjusted threshold for better sensitivity
+            const SPEECH_THRESHOLD = 25;
+            const isSpeaking = average > SPEECH_THRESHOLD;
+
+            if (isSpeaking && !isSpeakingRef.current) {
+                // Speech started
+                isSpeakingRef.current = true;
+                startRecording();
+
+                // Clear any existing silence timeout
+                if (silenceTimeoutRef.current) {
+                    clearTimeout(silenceTimeoutRef.current);
+                    silenceTimeoutRef.current = null;
+                }
+            } else if (!isSpeaking && isSpeakingRef.current) {
+                // Potential silence, wait 1s before stopping
+                if (!silenceTimeoutRef.current) {
+                    silenceTimeoutRef.current = window.setTimeout(() => {
+                        isSpeakingRef.current = false;
+                        stopAndSendRecording();
+                        silenceTimeoutRef.current = null;
+                    }, 1000); // Reduced to 1 second for faster response
+                }
+            } else if (isSpeaking && silenceTimeoutRef.current) {
+                // Speech resumed, cancel silence timeout
+                clearTimeout(silenceTimeoutRef.current);
+                silenceTimeoutRef.current = null;
             }
-            recognitionRef.current = null;
+
+            // Continue monitoring
+            requestAnimationFrame(checkAudioLevel);
+        };
+
+        checkAudioLevel();
+    };
+
+    const startRecording = () => {
+        if (!streamRef.current || mediaRecorderRef.current) return;
+
+        try {
+            const mediaRecorder = new MediaRecorder(streamRef.current, {
+                mimeType: 'audio/webm;codecs=opus'
+            });
+            mediaRecorderRef.current = mediaRecorder;
+            chunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    chunksRef.current.push(e.data);
+                }
+            };
+
+            mediaRecorder.start();
+        } catch (error) {
+            console.error('Error starting MediaRecorder:', error);
         }
+    };
+
+    const stopAndSendRecording = async () => {
+        if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') return;
+
+        return new Promise<void>((resolve) => {
+            const mediaRecorder = mediaRecorderRef.current!;
+
+            mediaRecorder.onstop = async () => {
+                if (chunksRef.current.length > 0 && socket) {
+                    const blob = new Blob(chunksRef.current, { type: 'audio/webm;codecs=opus' });
+
+                    // Only send if blob is substantial
+                    if (blob.size > 3000) {
+                        const buffer = await blob.arrayBuffer();
+                        socket.emit('audio-chunk', {
+                            roomId,
+                            audio: buffer,
+                            timestamp: Date.now()
+                        });
+                    }
+                }
+
+                chunksRef.current = [];
+                mediaRecorderRef.current = null;
+                resolve();
+            };
+
+            mediaRecorder.stop();
+        });
+    };
+
+    const stopRecording = () => {
+        // Clear silence timeout
+        if (silenceTimeoutRef.current) {
+            clearTimeout(silenceTimeoutRef.current);
+            silenceTimeoutRef.current = null;
+        }
+
+        // Stop media recorder
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+        }
+
+        // Close audio context
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+
+        // Stop stream
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+        }
+
+        isSpeakingRef.current = false;
     };
 };
