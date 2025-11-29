@@ -7,7 +7,7 @@ export const useAudioStream = (socket: Socket | null, roomId: string, isMicOn: b
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const isSpeakingRef = useRef(false);
-    const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const silenceTimeoutRef = useRef<number | null>(null);
     const chunksRef = useRef<Blob[]>([]);
 
     useEffect(() => {
