@@ -85,6 +85,16 @@ export function setupSignaling(io: Server) {
             io.to(payload.target).emit('ice-candidate', { candidate: payload.candidate, caller: socket.id });
         });
 
+        // Relay transcripts to room
+        socket.on('transcript', (payload: { roomId: string; userId: string; text: string; timestamp: number; isFinal: boolean }) => {
+            socket.to(payload.roomId).emit('transcript', {
+                userId: payload.userId,
+                text: payload.text,
+                timestamp: payload.timestamp,
+                isFinal: payload.isFinal
+            });
+        });
+
         socket.on('disconnect', () => {
             console.log('User disconnected:', socket.id);
             // Remove from rooms

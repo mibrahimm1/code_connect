@@ -1,75 +1,111 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Socket } from 'socket.io-client';
 
+// Extend Window interface for webkit prefix
+declare global {
+    interface Window {
+        webkitSpeechRecognition: any;
+    }
+}
+
 export const useAudioStream = (socket: Socket | null, roomId: string, isMicOn: boolean) => {
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const streamRef = useRef<MediaStream | null>(null);
+    const recognitionRef = useRef<any>(null);
+    const [isSupported, setIsSupported] = useState(true);
 
     useEffect(() => {
-        if (!socket || !isMicOn || !roomId) {
-            stopRecording();
+        // Check if browser supports Web Speech API
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (!SpeechRecognition) {
+            console.warn('Web Speech API not supported in this browser');
+            setIsSupported(false);
             return;
         }
 
-        startRecording();
+        if (!socket || !isMicOn || !roomId) {
+            stopRecognition();
+            return;
+        }
+
+        startRecognition();
 
         return () => {
-            stopRecording();
+            stopRecognition();
         };
     }, [socket, isMicOn, roomId]);
 
-    const startRecording = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            streamRef.current = stream;
+    const startRecognition = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-            const recordSegment = () => {
-                if (!streamRef.current?.active) return;
+        if (!SpeechRecognition) return;
 
-                const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-                mediaRecorderRef.current = mediaRecorder;
+        const recognition = new SpeechRecognition();
+        recognitionRef.current = recognition;
 
-                const chunks: Blob[] = [];
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) chunks.push(e.data);
-                };
+        // Configuration
+        recognition.continuous = true; // Keep listening
+        recognition.interimResults = true; // Get partial results
+        recognition.lang = 'en-US';
 
-                mediaRecorder.onstop = async () => {
-                    if (chunks.length > 0 && socket) {
-                        const blob = new Blob(chunks, { type: 'audio/webm' });
-                        const buffer = await blob.arrayBuffer();
-                        socket.emit('audio-chunk', {
-                            roomId,
-                            audio: buffer,
-                            timestamp: Date.now()
-                        });
-                    }
-                    if (isMicOn && streamRef.current?.active) {
-                        recordSegment(); // Start next segment
-                    }
-                };
+        recognition.onresult = (event: any) => {
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                const isFinal = event.results[i].isFinal;
 
-                mediaRecorder.start();
+                // Only send if there's actual content
+                if (transcript.trim().length > 0 && socket) {
+                    socket.emit('transcript', {
+                        roomId,
+                        userId: socket.id,
+                        text: transcript.trim(),
+                        timestamp: Date.now(),
+                        isFinal
+                    });
+                }
+            }
+        };
+
+        recognition.onerror = (event: any) => {
+            console.error('Speech recognition error:', event.error);
+
+            // Restart on certain errors
+            if (event.error === 'no-speech' || event.error === 'audio-capture') {
                 setTimeout(() => {
-                    if (mediaRecorder.state === 'recording') {
-                        mediaRecorder.stop();
+                    if (isMicOn && recognitionRef.current) {
+                        recognition.start();
                     }
-                }, 1000); // 1 second chunks for better validity
-            };
+                }, 1000);
+            }
+        };
 
-            recordSegment();
+        recognition.onend = () => {
+            // Auto-restart if mic is still on
+            if (isMicOn && recognitionRef.current) {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    console.error('Failed to restart recognition:', e);
+                }
+            }
+        };
 
+        try {
+            recognition.start();
         } catch (error) {
-            console.error('Error accessing microphone:', error);
+            console.error('Error starting speech recognition:', error);
         }
     };
 
-    const stopRecording = () => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop();
-        }
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
+    const stopRecognition = () => {
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.stop();
+            } catch (e) {
+                // Ignore errors when stopping
+            }
+            recognitionRef.current = null;
         }
     };
+
+    return { isSupported };
 };

@@ -25,7 +25,17 @@ export const Captions: React.FC<CaptionsProps> = ({ socket, isTranslationOn, tar
 
         const handleTranscript = (payload: Transcript) => {
             setTranscripts(prev => {
-                // Keep last 3
+                // If it's an interim result, replace the previous interim from same user
+                if (!payload.isFinal) {
+                    const filtered = prev.filter(t => t.userId !== payload.userId || t.isFinal);
+                    const newTranscripts = [...filtered, payload];
+                    // Keep last 3
+                    if (newTranscripts.length > 3) {
+                        return newTranscripts.slice(newTranscripts.length - 3);
+                    }
+                    return newTranscripts;
+                }
+                // If final, just add it
                 const newTranscripts = [...prev, payload];
                 if (newTranscripts.length > 3) {
                     return newTranscripts.slice(newTranscripts.length - 3);
@@ -33,7 +43,7 @@ export const Captions: React.FC<CaptionsProps> = ({ socket, isTranslationOn, tar
                 return newTranscripts;
             });
 
-            if (isTranslationOn && targetLang) {
+            if (isTranslationOn && targetLang && payload.isFinal) {
                 socket.emit('translate-req', {
                     roomId,
                     text: payload.text,
