@@ -35,7 +35,7 @@ export function setupSignaling(io: Server) {
             }
         });
 
-        socket.on('create-room', (payload: { roomId: string; password?: string }, callback: (response: { success: boolean; message?: string }) => void) => {
+        socket.on('create-room', async (payload: { roomId: string; password?: string }, callback: (response: { success: boolean; message?: string }) => void) => {
             const { roomId, password } = payload;
 
             if (rooms[roomId]) {
@@ -44,12 +44,12 @@ export function setupSignaling(io: Server) {
             }
 
             rooms[roomId] = { id: roomId, password, participants: [socket.id] };
-            socket.join(roomId);
+            await socket.join(roomId);
             console.log(`User ${socket.id} created room ${roomId}`);
             callback({ success: true });
         });
 
-        socket.on('join-room', (payload: { roomId: string; password?: string }) => {
+        socket.on('join-room', async (payload: { roomId: string; password?: string }) => {
             const { roomId, password } = payload;
             let room = rooms[roomId];
 
@@ -65,7 +65,7 @@ export function setupSignaling(io: Server) {
 
             if (!room.participants.includes(socket.id)) {
                 room.participants.push(socket.id);
-                socket.join(roomId);
+                await socket.join(roomId);
                 console.log(`User ${socket.id} joined room ${roomId}`);
 
                 // Notify existing participant

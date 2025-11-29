@@ -32,7 +32,7 @@ function App() {
   }, []);
 
   // Pass isStreamReady to useWebRTC
-  const { remoteStream, connectionState, setLocalStream } = useWebRTC(socket, isInRoom ? roomId : '', password, isStreamReady);
+  const { remoteStream, connectionState, setLocalStream, logs } = useWebRTC(socket, isInRoom ? roomId : '', password, isStreamReady);
   useAudioStream(socket, isInRoom ? roomId : '', isMicOn);
 
   useEffect(() => {
@@ -134,7 +134,7 @@ function App() {
       </div>
 
       {/* Controls */}
-      <div className="flex gap-4 bg-gray-800 p-4 rounded-full">
+      <div className="flex gap-4 bg-gray-800 p-4 rounded-full mb-4">
         <button
           onClick={() => setIsMicOn(!isMicOn)}
           className={`p-3 rounded-full ${isMicOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'}`}
@@ -175,6 +175,14 @@ function App() {
             </select>
           )}
         </div>
+      </div>
+
+      {/* Debug Logs */}
+      <div className="w-full max-w-6xl bg-gray-800 p-4 rounded text-xs font-mono h-32 overflow-y-auto opacity-50 hover:opacity-100 transition-opacity">
+        <h3 className="font-bold mb-2 text-gray-400">Debug Logs</h3>
+        {logs.map((log, i) => (
+          <div key={i} className="mb-1">{log}</div>
+        ))}
       </div>
     </div>
   );
