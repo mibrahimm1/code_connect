@@ -37,11 +37,12 @@ export function setupTranscription(io: Server) {
 
                 const text = response.data.text;
                 if (text && text.trim().length > 0) {
+                    // Broadcast to entire room (including sender)
                     io.to(payload.roomId).emit('transcript', {
                         userId: socket.id,
                         text: text.trim(),
                         timestamp: payload.timestamp,
-                        isFinal: true // For this chunk approach, we treat it as a final segment
+                        isFinal: true
                     });
                 }
 

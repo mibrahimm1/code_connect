@@ -3,13 +3,12 @@ import { Mic, MicOff, Video, VideoOff, Languages } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { useWebRTC } from './hooks/useWebRTC';
 import { useAudioStream } from './hooks/useAudioStream';
-import { Captions } from './components/Captions';
 import { RoomEntry } from './components/RoomEntry';
 
 function App() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [roomId, setRoomId] = useState('');
-  const [password, setPassword] = useState(''); // Store password
+  const [password, setPassword] = useState('');
   const [isInRoom, setIsInRoom] = useState(false);
   const [isStreamReady, setIsStreamReady] = useState(false);
 
@@ -17,6 +16,10 @@ function App() {
   const [isCamOn, setIsCamOn] = useState(true);
   const [isTranslationOn, setIsTranslationOn] = useState(false);
   const [targetLang, setTargetLang] = useState('es');
+
+  // Transcription state
+  const [localTranscript, setLocalTranscript] = useState('');
+  const [remoteTranscript, setRemoteTranscript] = useState('');
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -31,9 +34,48 @@ function App() {
     };
   }, []);
 
-  // Pass isStreamReady to useWebRTC
   const { remoteStream, connectionState, setLocalStream, logs } = useWebRTC(socket, isInRoom ? roomId : '', password, isStreamReady);
   useAudioStream(socket, isInRoom ? roomId : '', isMicOn);
+
+  // Listen for transcripts
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('transcript', (data: { userId: string; text: string; timestamp: number; isFinal: boolean }) => {
+      // If it's from me, update local transcript
+      if (data.userId === socket.id) {
+        setLocalTranscript(data.text);
+      } else {
+        // Otherwise, update remote transcript
+        setRemoteTranscript(data.text);
+      }
+
+      // Request translation if enabled and it's a final transcript
+      if (isTranslationOn && data.isFinal) {
+        socket.emit('translate-req', {
+          roomId,
+          text: data.text,
+          targetLang,
+          originalTimestamp: data.timestamp,
+          userId: data.userId
+        });
+      }
+    });
+
+    socket.on('translation', (data: { userId: string; translatedText: string; timestamp: number }) => {
+      // Update the appropriate transcript with translation
+      if (data.userId === socket.id) {
+        setLocalTranscript(prev => `${prev}\n[${targetLang}]: ${data.translatedText}`);
+      } else {
+        setRemoteTranscript(prev => `${prev}\n[${targetLang}]: ${data.translatedText}`);
+      }
+    });
+
+    return () => {
+      socket.off('transcript');
+      socket.off('translation');
+    };
+  }, [socket, isTranslationOn, targetLang, roomId]);
 
   useEffect(() => {
     if (!isInRoom) return;
@@ -50,7 +92,7 @@ function App() {
         }
 
         setLocalStream(stream);
-        setIsStreamReady(true); // Signal that stream is ready
+        setIsStreamReady(true);
 
         stream.getAudioTracks().forEach(track => track.enabled = isMicOn);
         stream.getVideoTracks().forEach(track => track.enabled = isCamOn);
@@ -81,8 +123,6 @@ function App() {
     setRoomId(id);
     setPassword(pass || '');
     setIsInRoom(true);
-    // RoomEntry validated the room, but we wait for the stream to be ready before joining via WebRTC.
-    // This avoids the race condition where we negotiate before having tracks.
   };
 
   if (!isInRoom) {
@@ -93,44 +133,58 @@ function App() {
     <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4">
       <h1 className="text-2xl font-bold mb-4">Room: {roomId}</h1>
 
-      {/* Force side-by-side layout with flex-row */}
-      <div className="flex flex-row gap-4 w-full max-w-6xl mb-4 relative h-[60vh]">
-        {/* Local Video */}
-        <div className="flex-1 relative bg-black rounded-lg overflow-hidden border border-gray-700">
-          <video
-            ref={localVideoRef}
-            autoPlay
-            muted
-            playsInline
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute top-2 left-2 bg-black/50 px-2 py-1 rounded text-sm">You</div>
-        </div>
-
-        {/* Remote Video */}
-        <div className="flex-1 relative bg-black rounded-lg overflow-hidden border border-gray-700">
-          {remoteStream ? (
+      {/* Video Grid - Side by Side */}
+      <div className="flex flex-row gap-6 w-full max-w-6xl mb-4">
+        {/* Local Video Container */}
+        <div className="flex-1 flex flex-col">
+          <div className="relative bg-black rounded-lg overflow-hidden border border-gray-700 mb-3" style={{ aspectRatio: '16/9' }}>
             <video
-              ref={remoteVideoRef}
+              ref={localVideoRef}
               autoPlay
+              muted
               playsInline
               className="w-full h-full object-cover"
             />
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Waiting for peer... ({connectionState})
+            <div className="absolute top-2 left-2 bg-blue-600 px-3 py-1 rounded text-sm font-semibold">
+              You
             </div>
-          )}
-          <div className="absolute top-2 left-2 bg-black/50 px-2 py-1 rounded text-sm">Remote</div>
+          </div>
+          {/* Local Transcript */}
+          <div className="bg-gray-800 rounded-lg p-3 min-h-[80px] max-h-[120px] overflow-y-auto">
+            <div className="text-xs text-gray-400 mb-1">Your Transcript:</div>
+            <div className="text-sm whitespace-pre-wrap">
+              {localTranscript || <span className="text-gray-500 italic">Speak to see transcription...</span>}
+            </div>
+          </div>
         </div>
 
-        {/* Captions Overlay - Centered at bottom of container */}
-        <Captions
-          socket={socket}
-          roomId={roomId}
-          isTranslationOn={isTranslationOn}
-          targetLang={targetLang}
-        />
+        {/* Remote Video Container */}
+        <div className="flex-1 flex flex-col">
+          <div className="relative bg-black rounded-lg overflow-hidden border border-gray-700 mb-3" style={{ aspectRatio: '16/9' }}>
+            {remoteStream ? (
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-500">
+                Waiting for peer... ({connectionState})
+              </div>
+            )}
+            <div className="absolute top-2 left-2 bg-green-600 px-3 py-1 rounded text-sm font-semibold">
+              Remote User
+            </div>
+          </div>
+          {/* Remote Transcript */}
+          <div className="bg-gray-800 rounded-lg p-3 min-h-[80px] max-h-[120px] overflow-y-auto">
+            <div className="text-xs text-gray-400 mb-1">Remote Transcript:</div>
+            <div className="text-sm whitespace-pre-wrap">
+              {remoteTranscript || <span className="text-gray-500 italic">Waiting for remote user...</span>}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Controls */}
@@ -138,6 +192,7 @@ function App() {
         <button
           onClick={() => setIsMicOn(!isMicOn)}
           className={`p-3 rounded-full ${isMicOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'}`}
+          title={isMicOn ? 'Mute' : 'Unmute'}
         >
           {isMicOn ? <Mic /> : <MicOff />}
         </button>
@@ -145,6 +200,7 @@ function App() {
         <button
           onClick={() => setIsCamOn(!isCamOn)}
           className={`p-3 rounded-full ${isCamOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'}`}
+          title={isCamOn ? 'Turn off camera' : 'Turn on camera'}
         >
           {isCamOn ? <Video /> : <VideoOff />}
         </button>
