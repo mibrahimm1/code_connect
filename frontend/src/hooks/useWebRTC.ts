@@ -1,13 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { Socket } from 'socket.io-client';
 
-const STUN_SERVERS = {
+const ICE_SERVERS = {
     iceServers: [
+        // STUN servers for NAT discovery
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
+        // Free TURN servers from Metered.ca (open relay)
+        {
+            urls: 'turn:a.relay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turn:a.relay.metered.ca:80?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turn:a.relay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
+        {
+            urls: 'turns:a.relay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+        },
     ],
 };
 
@@ -88,8 +108,8 @@ export const useWebRTC = (socket: Socket | null, roomId: string, password: strin
     const createPeerConnection = (targetId: string, socket: Socket) => {
         if (peerConnection.current) return peerConnection.current;
 
-        addLog('Creating RTCPeerConnection');
-        const pc = new RTCPeerConnection(STUN_SERVERS);
+        addLog('Creating RTCPeerConnection with TURN servers');
+        const pc = new RTCPeerConnection(ICE_SERVERS);
         peerConnection.current = pc;
 
         pc.onicecandidate = (event) => {
@@ -106,6 +126,10 @@ export const useWebRTC = (socket: Socket | null, roomId: string, password: strin
         pc.onconnectionstatechange = () => {
             addLog(`Connection state changed: ${pc.connectionState}`);
             setConnectionState(pc.connectionState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            addLog(`ICE connection state: ${pc.iceConnectionState}`);
         };
 
         // Add local tracks if available
