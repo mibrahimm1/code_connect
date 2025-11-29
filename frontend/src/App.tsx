@@ -81,70 +81,8 @@ function App() {
     setRoomId(id);
     setPassword(pass || '');
     setIsInRoom(true);
-    // We don't emit join-room here anymore, useWebRTC does it when stream is ready
-    // But wait, RoomEntry was doing the validation. 
-    // We should probably let RoomEntry validate, but NOT join the socket room yet?
-    // Actually, RoomEntry emits 'join-room' to validate. 
-    // If we want to delay the *WebRTC* join, we might need a separate event or just rely on the fact that
-    // RoomEntry already joined the signaling room.
-    // Issue: If RoomEntry joins, and then we start stream, and then we try to negotiate...
-    // The 'user-connected' event fires when RoomEntry joins.
-    // But we aren't listening in useWebRTC yet because we might not have rendered it?
-    // No, useWebRTC is at top level.
-    // If RoomEntry joins, socket emits 'join-room'. Server adds to room. Server emits 'user-connected'.
-    // useWebRTC hears 'user-connected'. Calls createOffer.
-    // Stream NOT ready. createOffer makes PC with NO tracks.
-    // This is the bug.
-
-    // Fix: RoomEntry should only CHECK if room exists/password correct.
-    // It should NOT join the socket room.
-    // But my backend `join-room` does both check and join.
-    // I need to split backend logic or change frontend flow.
-    // Simplest fix: RoomEntry does the join (validation + join).
-    // useWebRTC should IGNORE 'user-connected' until stream is ready.
-    // AND if stream becomes ready AFTER 'user-connected', we need to initiate offer then?
-    // No, 'user-connected' is transient.
-
-    // Better: RoomEntry validates but does NOT join?
-    // Or: useWebRTC joins. RoomEntry just passes params.
-    // But we want to show error if password wrong.
-
-    // Let's stick to: RoomEntry validates (maybe using a new 'validate-room' event? or just try to join and leave if fail?)
-    // Actually, if RoomEntry joins, we are in the room.
-    // We just need to ensure we don't negotiate until we have tracks.
-    // If we receive 'user-connected' but aren't ready, we miss the boat.
-
-    // Alternative:
-    // 1. RoomEntry calls `join-room`. Success.
-    // 2. App mounts Video UI. `startLocalStream` begins.
-    // 3. `useWebRTC` sees `isInRoom`.
-    // 4. `user-connected` might have fired already?
-    //    - If I am User A (creator), I am in room.
-    //    - User B joins. I get `user-connected`.
-    //    - If I am already streaming, I send offer. Good.
-    //    - If I am User B (joiner). I join.
-    //    - User A gets `user-connected`. User A sends offer.
-    //    - I receive offer.
-    //    - I handle offer. I create PC.
-    //    - I have no tracks yet!
-    //    - I send answer.
-    //    - Connection established. No video from me.
-
-    // So the issue is mainly for the *Joiner* (User B) sending their video.
-    // User A (Creator) usually has video ready.
-
-    // If User B sends answer without tracks, connection is audio/video-less from B->A.
-    // Later B gets tracks. Calls `setLocalStream`. Adds tracks.
-    // **We need `negotiationneeded` to trigger re-offer.**
-
-    // But since I want to avoid complex renegotiation:
-    // I will change `RoomEntry` to NOT join.
-    // I will add `validate-room` to backend.
-    // `RoomEntry` calls `validate-room`. If success, `App` starts stream.
-    // Once stream ready, `useWebRTC` calls `join-room`.
-
-    // This requires backend change.
-    // Let's do it. It's cleaner.
+    // RoomEntry validated the room, but we wait for the stream to be ready before joining via WebRTC.
+    // This avoids the race condition where we negotiate before having tracks.
   };
 
   if (!isInRoom) {
