@@ -1,15 +1,54 @@
 import { useEffect, useRef, useState } from 'react';
 import { Socket } from 'socket.io-client';
 
-// Extend Window interface for webkit prefix
+// TypeScript interfaces for Web Speech API
+interface SpeechRecognitionEvent extends Event {
+    results: SpeechRecognitionResultList;
+    resultIndex: number;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+    error: string;
+}
+
+interface SpeechRecognitionResultList {
+    length: number;
+    item(index: number): SpeechRecognitionResult;
+    [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+    isFinal: boolean;
+    length: number;
+    item(index: number): SpeechRecognitionAlternative;
+    [index: number]: SpeechRecognitionAlternative;
+}
+
+interface SpeechRecognitionAlternative {
+    transcript: string;
+    confidence: number;
+}
+
+interface SpeechRecognition extends EventTarget {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    onresult: ((event: SpeechRecognitionEvent) => void) | null;
+    onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+    onend: (() => void) | null;
+    start(): void;
+    stop(): void;
+}
+
 declare global {
     interface Window {
-        webkitSpeechRecognition: any;
+        SpeechRecognition: new () => SpeechRecognition;
+        webkitSpeechRecognition: new () => SpeechRecognition;
     }
 }
 
 export const useAudioStream = (socket: Socket | null, roomId: string, isMicOn: boolean) => {
-    const recognitionRef = useRef<any>(null);
+    const recognitionRef = useRef<SpeechRecognition | null>(null);
     const [isSupported, setIsSupported] = useState(true);
 
     useEffect(() => {
@@ -47,7 +86,7 @@ export const useAudioStream = (socket: Socket | null, roomId: string, isMicOn: b
         recognition.interimResults = true; // Get partial results
         recognition.lang = 'en-US';
 
-        recognition.onresult = (event: any) => {
+        recognition.onresult = (event: SpeechRecognitionEvent) => {
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const transcript = event.results[i][0].transcript;
                 const isFinal = event.results[i].isFinal;
@@ -65,7 +104,7 @@ export const useAudioStream = (socket: Socket | null, roomId: string, isMicOn: b
             }
         };
 
-        recognition.onerror = (event: any) => {
+        recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
             console.error('Speech recognition error:', event.error);
 
             // Restart on certain errors
